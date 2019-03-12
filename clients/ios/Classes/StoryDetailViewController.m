@@ -125,6 +125,12 @@
     doubleDoubleTapGesture.delegate = self;
     [self.webView addGestureRecognizer:doubleDoubleTapGesture];
     
+    if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPhone) {
+        UIPinchGestureRecognizer *pinchGesture = [[UIPinchGestureRecognizer alloc]
+                                                  initWithTarget:self action:@selector(pinchGesture:)];
+        [self.webView addGestureRecognizer:pinchGesture];
+    }
+    
     UIScreenEdgePanGestureRecognizer *screenEdgeGesture = [[UIScreenEdgePanGestureRecognizer alloc]
                                                            initWithTarget:self action:@selector(screenEdgeSwipe:)];
     screenEdgeGesture.edges = UIRectEdgeLeft;
@@ -178,11 +184,8 @@
 
 - (void)tap:(UITapGestureRecognizer *)gestureRecognizer {
 //    NSLog(@"Gesture tap: %ld (%ld) - %d", (long)gestureRecognizer.state, (long)UIGestureRecognizerStateEnded, inDoubleTap);
-
-    NSUserDefaults *preferences = [NSUserDefaults standardUserDefaults];
-    NSString *tapStory = [preferences stringForKey:@"tap_story"];
     
-    if (gestureRecognizer.state == UIGestureRecognizerStateEnded && gestureRecognizer.numberOfTouches == 1 && [tapStory isEqualToString:@"toggle_full_screen"] && UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPhone && self.presentedViewController == nil) {
+    if (gestureRecognizer.state == UIGestureRecognizerStateEnded && gestureRecognizer.numberOfTouches == 1 && appDelegate.storyPageControl.autoscrollAvailable && self.presentedViewController == nil) {
         CGPoint pt = [self pointForGesture:gestureRecognizer];
         if (pt.x == CGPointZero.x && pt.y == CGPointZero.y) return;
 //        NSLog(@"Tapped point: %@", NSStringFromCGPoint(pt));
@@ -206,13 +209,7 @@
         
         // Ignore links, videos, and iframes (e.g. embedded YouTube videos).
         if (!inDoubleTap && ![@[@"A", @"VIDEO", @"IFRAME"] containsObject:tagName]) {
-            BOOL isHidden = self.navigationController.navigationBarHidden;
-            
-            if (self.webView.scrollView.contentOffset.y > 10 || isHidden) {
-                appDelegate.storyPageControl.wantNavigationBarHidden = !isHidden;
-                
-                [appDelegate.storyPageControl setNavigationBarHidden:!isHidden alsoTraverse:YES];
-            }
+            [appDelegate.storyPageControl showAutoscrollBriefly:YES];
         }
         
 //        [self tapImage:gestureRecognizer];
@@ -263,7 +260,17 @@
         }
         inDoubleTap = NO;
         [self performSelector:@selector(deferredEnableScrolling) withObject:nil afterDelay:0.0];
+        appDelegate.storyPageControl.autoscrollActive = NO;
     }
+}
+
+- (void)pinchGesture:(UIPinchGestureRecognizer *)gestureRecognizer {
+    if (gestureRecognizer.state != UIGestureRecognizerStateEnded) {
+        return;
+    }
+    
+    appDelegate.storyPageControl.forceNavigationBarShown = gestureRecognizer.scale < 1;
+    [appDelegate.storyPageControl changedFullscreen];
 }
 
 - (void)screenEdgeSwipe:(UITapGestureRecognizer *)gestureRecognizer {
@@ -1352,11 +1359,14 @@
             hasScrolled = YES;
         }
         
+        BOOL isHorizontal = appDelegate.storyPageControl.isHorizontal;
         BOOL isNavBarHidden = self.navigationController.navigationBarHidden;
         
-        if (topPosition <= 0 && isNavBarHidden) {
+        if (!isHorizontal && appDelegate.storyPageControl.previousPage.pageIndex < 0) {
             [appDelegate.storyPageControl setNavigationBarHidden:NO];
-        } else if (!nearTop && !isNavBarHidden && self.canHideNavigationBar && appDelegate.storyPageControl.wantNavigationBarHidden) {
+        } else if (isHorizontal && topPosition <= 0 && isNavBarHidden) {
+            [appDelegate.storyPageControl setNavigationBarHidden:NO];
+        } else if (!nearTop && !isNavBarHidden && self.canHideNavigationBar) {
             [appDelegate.storyPageControl setNavigationBarHidden:YES];
         }
         
@@ -1369,10 +1379,10 @@
             } completion:^(BOOL finished) {
                 
             }];
-        } else if (singlePage || !appDelegate.storyPageControl.isHorizontal) {
+        } else if (singlePage || !isHorizontal) {
             appDelegate.storyPageControl.traverseView.alpha = 1;
 //            NSLog(@" ---> Bottom position: %d", bottomPosition);
-            if (bottomPosition >= 0 || !appDelegate.storyPageControl.isHorizontal) {
+            if (bottomPosition >= 0 || !isHorizontal) {
 //                appDelegate.storyPageControl.traverseView.frame = CGRectMake(tvf.origin.x,
 //                                                                             self.webView.scrollView.frame.size.height - tvf.size.height - safeBottomMargin,
 //                                                                             tvf.size.width, tvf.size.height);
@@ -1846,10 +1856,7 @@ shouldStartLoadWithRequest:(NSURLRequest *)request
         return NO;
     }
     
-    NSUserDefaults *preferences = [NSUserDefaults standardUserDefaults];
-    NSString *tapStory = [preferences stringForKey:@"tap_story"];
-    
-    if (![tapStory isEqualToString:@"toggle_full_screen"]) {
+    if (!appDelegate.storyPageControl.wantNavigationBarHidden) {
         NSLog(@"canHideNavigationBar: no, toggle is off");  // log
         return NO;
     }
